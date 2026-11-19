@@ -1,0 +1,22 @@
+[package]
+name = "crust-studio"
+version = "0.1.0"
+description = "CRust Studio - Desktop Launcher & Theme Studio for CRust"
+authors = ["1clickmake"]
+edition = "2021"
+
+[lib]
+name = "crust_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = "2"
+walkdir = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

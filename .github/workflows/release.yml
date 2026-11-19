@@ -1,0 +1,85 @@
+name: Build CRust Studio (Windows & macOS)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: CRust-Studio-Windows-x64
+            studio_bin: crust-studio.exe
+            crust_bin: rust_board.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: CRust-Studio-macOS-AppleSilicon
+            studio_bin: CRust Studio.app
+            crust_bin: rust_board
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: CRust-Studio-macOS-Intel
+            studio_bin: CRust Studio.app
+            crust_bin: rust_board
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout crust-studio
+        uses: actions/checkout@v4
+
+      - name: Checkout CRust core (1clickmake/CRust)
+        uses: actions/checkout@v4
+        with:
+          repository: 1clickmake/CRust
+          path: crust-core
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build CRust core binary
+        working-directory: crust-core
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build CRust Studio
+        working-directory: src-tauri
+        run: |
+          cargo install tauri-cli --version "^2" --locked || true
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cargo build --release --target ${{ matrix.target }}
+          else
+            cargo tauri build --target ${{ matrix.target }} --bundles app
+          fi
+        shell: bash
+
+      - name: Assemble portable package
+        shell: bash
+        run: |
+          mkdir -p dist/${{ matrix.artifact_name }}/runtime
+          cp -r crust-core/templates dist/${{ matrix.artifact_name }}/runtime/
+          cp -r crust-core/static dist/${{ matrix.artifact_name }}/runtime/
+          cp crust-core/config.example.toml dist/${{ matrix.artifact_name }}/runtime/config.toml || true
+          sed -i.bak 's/dev_mode = false/dev_mode = true/' dist/${{ matrix.artifact_name }}/runtime/config.toml || true
+          rm -f dist/${{ matrix.artifact_name }}/runtime/config.toml.bak
+
+          cp crust-core/target/${{ matrix.target }}/release/${{ matrix.crust_bin }} dist/${{ matrix.artifact_name }}/runtime/
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp src-tauri/target/${{ matrix.target }}/release/crust-studio.exe dist/${{ matrix.artifact_name }}/
+          else
+            cp -R "src-tauri/target/${{ matrix.target }}/release/bundle/macos/CRust Studio.app" dist/${{ matrix.artifact_name }}/
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}
