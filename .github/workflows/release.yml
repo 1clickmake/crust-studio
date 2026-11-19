@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-portable:
     strategy:
@@ -60,7 +63,7 @@ jobs:
           fi
         shell: bash
 
-      - name: Assemble portable package
+      - name: Assemble & zip portable package
         shell: bash
         run: |
           mkdir -p dist/${{ matrix.artifact_name }}/runtime
@@ -74,12 +77,36 @@ jobs:
 
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp src-tauri/target/${{ matrix.target }}/release/crust-studio.exe dist/${{ matrix.artifact_name }}/
+            powershell -Command "Compress-Archive -Path 'dist/${{ matrix.artifact_name }}/*' -DestinationPath 'dist/${{ matrix.artifact_name }}.zip' -Force"
           else
             cp -R "src-tauri/target/${{ matrix.target }}/release/bundle/macos/CRust Studio.app" dist/${{ matrix.artifact_name }}/
+            (cd dist/${{ matrix.artifact_name }} && zip -ry ../${{ matrix.artifact_name }}.zip .)
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}.zip
+
+  publish-release:
+    needs: build-portable
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-files
+
+      - name: Flatten zip files
+        run: |
+          mkdir -p final-zips
+          find release-files -name "*.zip" -exec mv {} final-zips/ \;
+          ls -la final-zips/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: final-zips/*.zip
