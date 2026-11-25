@@ -360,6 +360,18 @@ fn install_crust(app: tauri::AppHandle, state: State<AppState>, target_dir: Stri
             }
             let mut outfile = File::create(&out_path).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Some(fname) = out_path.file_name().and_then(|n| n.to_str()) {
+                    if fname == "rust_board" || fname == "crust" {
+                        if let Ok(mut perms) = fs::metadata(&out_path).map(|m| m.permissions()) {
+                            perms.set_mode(0o755);
+                            let _ = fs::set_permissions(&out_path, perms);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -426,6 +438,22 @@ fn toggle_dev_mode(state: State<AppState>, enabled: bool) -> Result<StudioStatus
     Ok(build_status(&mut rt))
 }
 
+fn find_cargo_binary() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home).join(".cargo").join("bin").join("cargo");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    for cand in ["/opt/homebrew/bin/cargo", "/usr/local/bin/cargo"] {
+        let p = PathBuf::from(cand);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 #[tauri::command]
 fn start_server(
     app: tauri::AppHandle,
@@ -451,6 +479,16 @@ fn start_server(
     }
 
     let mut cmd = if let Some(bin) = find_crust_binary(&ws) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(mut perms) = fs::metadata(&bin).map(|m| m.permissions()) {
+                if (perms.mode() & 0o111) == 0 {
+                    perms.set_mode(0o755);
+                    let _ = fs::set_permissions(&bin, perms);
+                }
+            }
+        }
         push_log(
             &mut rt.logs,
             format!("[Studio] 바이너리 실행: {}", bin.display()),
@@ -461,7 +499,8 @@ fn start_server(
             &mut rt.logs,
             "[Studio] 바이너리가 없어 cargo run 으로 시작합니다...".into(),
         );
-        let mut c = Command::new("cargo");
+        let cargo_cmd = find_cargo_binary().unwrap_or_else(|| PathBuf::from("cargo"));
+        let mut c = Command::new(cargo_cmd);
         c.arg("run");
         c
     } else {
@@ -478,9 +517,14 @@ fn start_server(
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("CRust 서버 시작 실패: {e}"))?;
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("CRust 서버 시작 실패: {e}");
+            push_log(&mut rt.logs, format!("[Studio] {msg}"));
+            return Err(msg);
+        }
+    };
 
     if let Some(stdout) = child.stdout.take() {
         let app_handle = app.clone();
